@@ -71,4 +71,54 @@ describe(withWidgetSourceFiles, () => {
       expect(existing).not.toContain('if #available(iOS 27.0, *)');
     }
   );
+
+  it('generates an AppEntity with a named default for a dynamic enum parameter with entity', async () => {
+    const widget: WidgetConfig = {
+      name: 'Example',
+      displayName: 'Example',
+      description: 'Example widget',
+      ios: {
+        supportedFamilies: [WidgetFamily.systemSmall],
+        configuration: {
+          title: 'Example',
+          parameters: {
+            desktop: {
+              title: 'Desktop',
+              type: 'enum',
+              dynamic: true,
+              entity: true,
+              values: [{ name: 'Most recently updated', value: 'automatic' }],
+              default: 'automatic',
+            },
+          },
+        },
+      },
+    };
+    const config = withWidgetSourceFiles(
+      { name: 'test', slug: 'test' },
+      {
+        widgets: [widget],
+        targetName: 'Widgets',
+        groupIdentifier: 'group.test',
+        onFilesGenerated: () => {},
+      }
+    );
+    await compileModsAsync(config, {
+      projectRoot,
+      platforms: ['ios'],
+      assertMissingModProviders: false,
+    });
+    const swift = fs.readFileSync(
+      path.join(projectRoot, 'ios', 'Widgets', 'Example.swift'),
+      'utf8'
+    );
+
+    expect(swift).toContain(`  @Parameter(title: "Desktop")
+  var desktop: ExampleDesktopEntity?`);
+    expect(swift).toContain('struct ExampleDesktopEntity: AppEntity {');
+    expect(swift).toContain(
+      '?? ExampleDesktopEntity(id: "automatic", name: "Most recently updated", subtitle: nil)'
+    );
+    expect(swift).toContain('"desktop": entry.configuration.desktop?.id');
+  });
 });

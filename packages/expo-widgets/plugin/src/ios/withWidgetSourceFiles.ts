@@ -50,6 +50,11 @@ function validateWidget(widget: WidgetConfig): void {
       } else if (param.type === 'boolean' && typeof param.default !== 'boolean') {
         throw new Error(`Invalid default for ${JSON.stringify(paramName)}: must be a boolean.`);
       } else if (param.type === 'enum') {
+        if (param.entity === true && param.dynamic !== true) {
+          throw new Error(
+            `Invalid entity for ${JSON.stringify(paramName)}: entity requires dynamic: true.`
+          );
+        }
         assertSwiftIdentifier(param.default, `default for ${JSON.stringify(paramName)}`);
         for (const value of param.values) {
           assertSwiftIdentifier(value.value, `enum case for ${JSON.stringify(paramName)}`);
@@ -215,10 +220,18 @@ const enumTypeName = (widgetName: string, parameterName: string): string =>
 const optionsProviderName = (widgetName: string, parameterName: string): string =>
   `${widgetName}${capitalize(parameterName)}OptionsProvider`;
 
+const entityTypeName = (widgetName: string, parameterName: string): string =>
+  `${widgetName}${capitalize(parameterName)}Entity`;
+
 const isDynamicEnumParameter = (
   parameter: WidgetParameter
 ): parameter is Extract<WidgetParameter, { type: 'enum' }> & { dynamic: true } =>
   parameter.type === 'enum' && parameter.dynamic === true;
+
+const isEntityEnumParameter = (
+  parameter: WidgetParameter
+): parameter is Extract<WidgetParameter, { type: 'enum' }> & { dynamic: true; entity: true } =>
+  isDynamicEnumParameter(parameter) && parameter.entity === true;
 
 const parameterSwiftType = (
   widgetName: string,
@@ -265,6 +278,9 @@ const parameterDeclaration = (
   parameterName: string,
   parameter: WidgetParameter
 ): string => {
+  if (isEntityEnumParameter(parameter)) {
+    return `  @Parameter(title: ${JSON.stringify(parameter.title)})\n  var ${parameterName}: ${entityTypeName(widgetName, parameterName)}?`;
+  }
   if (isDynamicEnumParameter(parameter)) {
     return `  @Parameter(title: ${JSON.stringify(parameter.title)}, optionsProvider: ${optionsProviderName(widgetName, parameterName)}())\n  var ${parameterName}: String?`;
   }
@@ -275,6 +291,9 @@ const configurationValueExpression = (
   parameterName: string,
   parameter: WidgetParameter
 ): string => {
+  if (isEntityEnumParameter(parameter)) {
+    return `      "${parameterName}": entry.configuration.${parameterName}?.id`;
+  }
   const rawValueAccess =
     parameter.type === 'enum' && !isDynamicEnumParameter(parameter) ? '.rawValue' : '';
   return `      "${parameterName}": entry.configuration.${parameterName}${rawValueAccess}`;
@@ -344,6 +363,65 @@ ${parameter.values
   }
 }`;
 
+const dynamicEnumEntitySwift = (
+  widgetName: string,
+  parameterName: string,
+  parameter: Extract<WidgetParameter, { type: 'enum' }> & { dynamic: true }
+): string => {
+  const typeName = entityTypeName(widgetName, parameterName);
+  const defaultName =
+    parameter.values.find((value) => value.value === parameter.default)?.name ?? parameter.default;
+  return `
+struct ${typeName}: AppEntity {
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: ${JSON.stringify(parameter.title)})
+  static var defaultQuery = ${typeName}Query()
+
+  let id: String
+  let name: String
+  let subtitle: String?
+
+  var displayRepresentation: DisplayRepresentation {
+    DisplayRepresentation(
+      title: LocalizedStringResource(stringLiteral: name),
+      subtitle: subtitle.map { return LocalizedStringResource(stringLiteral: $0) }
+    )
+  }
+}
+
+struct ${typeName}Query: EntityQuery {
+  // A saved value that is no longer in the options keeps its id, so the widget still gets it.
+  func entities(for identifiers: [String]) async throws -> [${typeName}] {
+    let all = options()
+    return identifiers.map { id in
+      return all.first { return $0.id == id } ?? ${typeName}(id: id, name: id, subtitle: nil)
+    }
+  }
+
+  func suggestedEntities() async throws -> [${typeName}] {
+    return options()
+  }
+
+  func defaultResult() async -> ${typeName}? {
+    return options().first { return $0.id == ${JSON.stringify(parameter.default)} }
+      ?? ${typeName}(id: ${JSON.stringify(parameter.default)}, name: ${JSON.stringify(defaultName)}, subtitle: nil)
+  }
+
+  private func options() -> [${typeName}] {
+    return widgetConfigurationOptions(
+      name: ${JSON.stringify(widgetName)},
+      parameter: ${JSON.stringify(parameterName)},
+      fallback: [
+${parameter.values
+  .map((value) => {
+    return `        WidgetConfigurationOption(name: ${JSON.stringify(value.name)}, value: ${JSON.stringify(value.value)})`;
+  })
+  .join(',\n')}
+      ]
+    ).map { return ${typeName}(id: $0.value, name: $0.name, subtitle: $0.subtitle) }
+  }
+}`;
+};
+
 const widgetSwift = (widget: WidgetConfig): string => {
   const configuration = widget.ios?.configuration ?? widget.configuration;
   const supportedFamilies = widget.ios?.supportedFamilies ?? widget.supportedFamilies ?? [];
@@ -401,6 +479,9 @@ ${Object.entries(configuration?.parameters ?? {})
 ${Object.entries(configuration?.parameters ?? {})
   .map(([name, param]) => {
     if (param.type !== 'enum') return '';
+    if (isEntityEnumParameter(param)) {
+      return dynamicEnumEntitySwift(widget.name, name, param);
+    }
     return isDynamicEnumParameter(param)
       ? dynamicEnumOptionsProviderSwift(widget.name, name, param)
       : staticEnumSwift(widget.name, name, param);

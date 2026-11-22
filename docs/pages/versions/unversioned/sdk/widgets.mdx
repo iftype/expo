@@ -146,7 +146,7 @@ You can configure `expo-widgets` using its built-in [config plugin](/config-plug
         'Makes the widget [configurable](#configurable-widgets). The values the user picks are passed to your widget at runtime through `environment.configuration`. An object with:',
         '* `title` - The title shown when the user edits the widget.',
         '* `description` - An optional description shown when the user edits the widget.',
-        '* `parameters` - A map of parameter keys to parameter definitions. Each parameter has a `title`, a `type` (`string`, `number`, `boolean`, or `enum`), and a `default`. An `enum` parameter additionally takes a `values` array of `{ name, value }` options and can set `dynamic: true` to let the app replace those options at runtime.',
+        '* `parameters` - A map of parameter keys to parameter definitions. Each parameter has a `title`, a `type` (`string`, `number`, `boolean`, or `enum`), and a `default`. An `enum` parameter additionally takes a `values` array of `{ name, value }` options and can set `dynamic: true` to let the app replace those options at runtime. A `dynamic` enum parameter can also set `entity: true` to show the name of the default option when the user edits the widget.',
       ].join('\n'),
     },
     {
@@ -547,6 +547,10 @@ WeatherWidget.setConfigurationParameterEnum('city', [
   { name: 'New York', value: 'nyc' },
 ]);
 ```
+
+By default, the widget edit screen shows the default option of a dynamic enum by its `value`, such as `current`. Set `entity: true` on the parameter to show its `name` instead. The parameter is then an [`AppEntity`](https://developer.apple.com/documentation/appintents/appentity). `environment.configuration` still receives the option `value`.
+
+> **warning** Adding `entity: true` to a parameter that is already in a released app resets the option that users picked in their existing widgets.
 
 ### Android widgets
 
